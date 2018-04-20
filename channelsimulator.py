@@ -7,7 +7,7 @@ from random import randint
 class ChannelSimulator(object):
     PROTOCOL_VERSION = 1
 
-    def __init__(self, is_sender, debug=False):
+    def __init__(self, is_sender, debug=True):
         self.ip = "127.0.0.1"
         self.sndr_socket = None
         self.rcvr_socket = None
@@ -70,10 +70,12 @@ class ChannelSimulator(object):
             bits = ''.join(bit_list)
             self.log("Bits before swap: " + bits)
         if swap < 10:
+            self.log("Swapping bits.")
             self.swap_bool = True
             self.swap = bits
             return
         if drop <= 10:
+            self.log("Packet dropped.")
             return
         return bits
 

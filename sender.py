@@ -2,7 +2,9 @@
 
 import socket
 import channelsimulator
+import numpy as np, struct
 
+from helper_funcs import *
 
 class BogoSender(object):
 
@@ -25,14 +27,39 @@ class BogoSender(object):
 
 class JerrTom_send(BogoSender):
     def __init__(self):
-        pass
+        super(JerrTom_send,self).__init__()
 
-    def send(self):
+    def check_my_checksum(self, packet, checksum):
+        # checks to see if checksum is a valid checksum for packet
+        total = 0
+        for char in packet:
+            total += struct.unpack('B', char)[0]
+        return total + checksum == 256
+
+    def send(self, data='1000010100100111'):
+        # send data to host using simulator
+        np.random.seed(4)
+
+        #create header for packet
+        sequence_number = np.random.randint(0,256) #1 byte
+        checksum = calculate_checksum(data) #1 byte
+        fin = to_bin(0,num_bytes = 1) #fin byte
+
+        print("Checksum: %s"%str(checksum))
+        #create header
+        header = to_bin(sequence_number) + str(checksum) + fin
+        #change data to binary
+        payload = data
+
+        #concatenate pieces of the packet
+        packet = '0b' + header + payload
+        print("Header: %s"%header)
+        print("Payload: %s"%payload)
         while True:
             try:
-                self.simulator.u_send(bin(2344))
+                self.simulator.u_send(packet)
                 ack = self.simulator.u_receive()  # receive ACK
-                print ack
+                print("Ack: %s"%ack)
                 break
             except socket.timeout:
                 pass
