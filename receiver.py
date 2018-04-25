@@ -1,17 +1,22 @@
 # Written by S. Mevawala, modified by D. Gitzel
 
 import channelsimulator
-import numpy as np
+import numpy as np, logging
 from helper_funcs import *
+import utils
 
 
 class BogoReceiver(object):
 
-    def __init__(self):
-        #super(self, BogoReceiver).__init__()
-        self.simulator = channelsimulator.ChannelSimulator(False)  # False for receiver
-        self.simulator.rcvr_setup()
-        self.simulator.sndr_setup()
+    def __init__(self, inbound_port=50005, outbound_port=50006, timeout=10, debug_level=logging.INFO):
+        self.logger = utils.Logger(self.__class__.__name__, debug_level)
+
+        self.inbound_port = inbound_port
+        self.outbound_port = outbound_port
+        self.simulator = channelsimulator.ChannelSimulator(inbound_port=inbound_port, outbound_port=outbound_port,
+                                                           debug_level=debug_level)
+        self.simulator.rcvr_setup(timeout)
+        self.simulator.sndr_setup(timeout)
 
     def receive(self):
         while True:
@@ -22,11 +27,12 @@ class BogoReceiver(object):
 class JerrTom_recv(BogoReceiver):
     def __init__(self):
         super(JerrTom_recv,self).__init__()
-        self.size_of_header = 3 #bytes
+        self.size_of_header = 10 #bytes
         #specificies locations of header fields in the header block
+        self.size_of_sequence_number = 8
         self.index_of_sequence_number = 1
-        self.index_of_checksum = 2
-        self.index_of_fin = 3
+        self.index_of_checksum = 9
+        self.index_of_fin = 10
 
         #data oriented things
         self.size_rand_data = 5 #bytes - for checksumming the ack purposes
@@ -35,41 +41,37 @@ class JerrTom_recv(BogoReceiver):
         #connection - oriented things
         self.connection_active = False
         self.sequence_number = 0 #number of next packet it hopes to receive
-        self.data = ''
+        self.data = '' #store final bytes in string form for file transfers
+        self.data_queue = [] #holds packets in the queue for re-ordering
+        self.max_data_queue_size = 1024 #bytes
 
     def store(self,data,sequence_number):
         #TODO need to make this more complicated
-        print("Storing data for later: %s"%data)
+        #print("Storing data for later: %s"%data)
         self.data += data
 
     def print_data(self):
         # assume data is numeric sequence of bytes
         print(self.data)
 
-
-    # def undo_binary(self,data):
-    #     #takes in a binary value and returns integer string 
-    #     num_samps = len(data) / self.size_data_type
-    #     ret = ''
-    #     for i in range(num_samps):
-    #         this_samp = self.data[i * 8: (i+1) * 8]
-    #         this_samp_int = 0
-    #         for j,char in enumerate(this_samp):
-    #             if char is '1':
-    #                 this_samp_int += 2^j
-    #         if ret != ''
-    #             ret += '-' #spacer
-    #         ret += str(this_samp_int)
-    #     return ret
-
     def receive(self):
         while True:
-            packet = self.simulator.u_receive()  # receive packet
+            packet = self.simulator.u_receive()
+            if packet is None:
+                print("Packet not received.")
+                return
+            packet = [to_bin(bite,num_bytes = 1) for bite in packet]
+            p = ''
+            for bite in packet:
+                p += bite
+            packet = p
+            
             #print("Packet: %s"%packet)
-            packet = packet[2:] #get rid of beginning nonsense
+            #packet = packet[2:] #get rid of beginning nonsense
             header = packet[0:self.size_of_header*8] #grab header
+            #print("Received header: %s"%header)
             data = packet[self.size_of_header*8:] #grab data
-            sequence_number = header[0:self.index_of_sequence_number * 8]
+            sequence_number = header[0:self.size_of_sequence_number * 8]
             #print("Received sequence number: %s"%sequence_number)
             header_chksum = header[(self.index_of_checksum - 1) * 8: self.index_of_checksum * 8]
             fin = header[(self.index_of_fin - 1) * 8: self.index_of_fin * 8]
@@ -82,36 +84,34 @@ class JerrTom_recv(BogoReceiver):
             send_checksum = calculate_checksum(send_data)
 
             if not (data_chksum == header_chksum):
-                #problem with the packet, send an ACK for the next packet we want to receive
-                print("Checksum invalid")
-                start_seq_num = to_bin(self.sequence_number)
+                #problem with the packet - drop it
+                #TODO: don't drop it?
+                print("Data checksum: %s"%data_chksum)
+                print("Header checksum: %s"%header_chksum)
+
+                self.sequence_number = sequence_number #still waiting for this packet
+                print("Checksum invalid.")
 
             else:
-                print("Checksum valid")    
-                if not self.connection_active:
-                    #start the connection
-                    self.connection_active = True  
-                    self.sequence_number = int(sequence_number) + 1
-                    self.store(data,sequence_number)
-                else:
-                    self.sequence_number = int(sequence_number) + 1
-                    self.store(data,sequence_number)
+                print("Checksum valid.")
+                self.sequence_number = int(sequence_number,2) + len(data) / 8
+                self.sequence_number = to_bin(self.sequence_number, num_bytes = self.size_of_sequence_number)
+                self.store(data,sequence_number)
 
-            if fin == to_bin(1): #if the fin byte is checked, end the connection
-                # TODO make a fin ack
-                self.connection_active = False
-                self.start_seq_num = 0
+            fin_ack = to_bin(0,num_bytes=1)
+            if fin == to_bin(1, num_bytes = 1): 
+                #if the fin byte is checked, end the connection
+                print("Acknowledging desire to close connection.")
+                fin_ack = to_bin(1,num_bytes=1)
 
-            send_seq_num = str(self.sequence_number)
-            send_seq_num = pad_binary_str(send_seq_num)
+            send_seq_num = self.sequence_number
 
             #form packet
-            send_header = send_seq_num + send_checksum
-            send_packet = '0b' + send_header + send_data  
-            print("Sending checksum: %s"%send_checksum)
-            print("Next expected packet: %d"%self.sequence_number)
-            print("Sending packet back: %s"%send_packet)
-
+            send_header = send_seq_num + send_checksum + fin_ack
+            send_packet = to_seq_of_ints(send_header + send_data)
+            send_packet = bytearray(send_packet)
+            print("Sending packet back...")
+            print(len(send_packet))
             self.simulator.u_send(send_packet)  # send packet
 
             # self.print_data()
