@@ -24,16 +24,21 @@ def to_seq_of_ints(string):
 def calculate_checksum(packet):
 	#TODO: not here, but calculate the checksum of everything in the packet (besides the checksum)
 	# assume packet is an integer number of bytes
+	num_bytes_checksum = 2
+	size_of_checksum = 2 ^ (8 * num_bytes_checksum) 
 	total = '0'
 	num_bytes = len(packet) / 8
 	for i in range(num_bytes):
 		this_byte = packet[i * 8: (i+1) * 8]
 		total = bin(int(total,2) + int(this_byte,2))[2:]
 	#print("Tot: %s"%total)
-	chksum = bin((256 - int(total,2) % 256) % 256)[2:] 
+	chksum = bin((size_of_checksum - int(total,2) % size_of_checksum) % size_of_checksum)[2:] 
 	#print("Chk: %s"%chksum)
-	if len(chksum) % 8 != 0:
-		chksum = '0' * (8 - len(chksum)) + chksum 
+	#print(len(chksum))
+	if len(chksum) % (8 * num_bytes_checksum) != 0:
+		#print("In here")
+		chksum = '0' * (num_bytes_checksum * 8 - len(chksum)) + chksum 
+		#print(chksum)
 	return chksum
 
 def pad_binary_str(str_to_pad):

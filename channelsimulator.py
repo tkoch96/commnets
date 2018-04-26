@@ -93,7 +93,8 @@ class ChannelSimulator(object):
         :param data_bytes: byte array to send to socket
         :return:
         """
-        self.sndr_socket.sendto(data_bytes, (self.ip, self.sndr_port))
+        if data_bytes is not None:
+            self.sndr_socket.sendto(data_bytes, (self.ip, self.sndr_port))
 
     def get_from_socket(self):
         """
@@ -104,7 +105,7 @@ class ChannelSimulator(object):
             data, address = self.rcvr_socket.recvfrom(ChannelSimulator.BUFFER_SIZE)  # buffer size is 1024 bytes
             return bytearray(data)
 
-    def corrupt(self, data_bytes, drop_error_prob=0.002, random_error_prob=0.002, swap_error_prob=0.002):
+    def corrupt(self, data_bytes, drop_error_prob=0.02, random_error_prob=0.02, swap_error_prob=0.02):
         """
         Corrupt data in the channel with random errors, swaps, and drops.
         :param swap_error_prob: swap frame error probability
@@ -114,36 +115,32 @@ class ChannelSimulator(object):
         :return: corrupted byte array
         """
         if self.debug:
-            logging.debug("Sending bytes through corrupting channel")
+            print("Sending bytes through corrupting channel")
         random_errors = uniform(0, 1)
         swap = uniform(0, 1)
         drop = uniform(0, 1)
         corrupted = deepcopy(data_bytes)
         if drop < drop_error_prob:
             if self.debug:
-                logging.debug("Dropping delayed and swapped frames: {}".format(self.swap))
+                print("Dropping delayed and swapped frames.")
             self.swap.clear()
             self.swap += [random_bytes(ChannelSimulator.BUFFER_SIZE), random_bytes(ChannelSimulator.BUFFER_SIZE)]
             if self.debug:
-                logging.debug("Dropping current frame: {}".format(data_bytes))
+                logging.debug("Dropping current frame.")
             return
         if random_errors < random_error_prob:
             if self.debug:
-                logging.debug("Frame before random errors: {}".format(data_bytes))
+                print("Introducing random errors.")
             for n in xrange(len(data_bytes)):
                 corrupted[n] ^= choice(ChannelSimulator.CORRUPTERS)
-            if self.debug:
-                logging.debug("Frame after random errors: {}".format(corrupted))
         if swap < swap_error_prob:
             if self.debug:
-                logging.debug("Frame before swap: {}".format(data_bytes))
+                print("Swapping frames.")
             if swap < swap_error_prob / 2:
                 corrupted = self.swap.pop()
             else:
                 corrupted = self.swap.popleft()
             self.swap.append(data_bytes)
-            if self.debug:
-                logging.debug("Frame after swap: {}".format(corrupted))
         return corrupted
 
     def u_send(self, data_bytes):
