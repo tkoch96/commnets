@@ -58,7 +58,10 @@ class JerrTom_recv(BogoReceiver):
 
     def print_data(self):
         # assume data is numeric sequence of bytes
-        print(self.data)
+        data = to_seq_of_ints(self.data)
+        data = bytearray(data)
+        with open('file_rec.txt','wb') as f:
+            f.write(data)
 
     def update_data(self):
         # we have received the next packet in the sequence, so we 
@@ -146,7 +149,10 @@ class JerrTom_recv(BogoReceiver):
             send_packet = bytearray(send_packet)
             self.simulator.u_send(send_packet)  # send packet
 
-            # self.print_data()
+            if fin == to_bin(1, num_bytes = 1):
+                self.print_data()
+                exit(0)
+            
 
 if __name__ == "__main__":
     rcvr = JerrTom_recv()

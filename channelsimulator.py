@@ -105,7 +105,7 @@ class ChannelSimulator(object):
             data, address = self.rcvr_socket.recvfrom(ChannelSimulator.BUFFER_SIZE)  # buffer size is 1024 bytes
             return bytearray(data)
 
-    def corrupt(self, data_bytes, drop_error_prob=0.02, random_error_prob=0.02, swap_error_prob=0.02):
+    def corrupt(self, data_bytes, drop_error_prob=0.002, random_error_prob=0.002, swap_error_prob=0.002):
         """
         Corrupt data in the channel with random errors, swaps, and drops.
         :param swap_error_prob: swap frame error probability

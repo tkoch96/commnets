@@ -44,7 +44,7 @@ class JerrTom_send(BogoSender):
         self.size_of_header = self.size_of_checksum + self.size_of_sequence_number + 1
 
         self.max_data_size = 1024 - self.size_of_header #bytes
-        self.max_un_acked = 2 #size of window (in packet size units)
+        self.max_un_acked = 10 #size of window (in packet size units)
 
         #connection oriented things
         self.start_sequence_number = 0 #offset accounting for random starting sequence number
@@ -53,6 +53,7 @@ class JerrTom_send(BogoSender):
         self.data = None #data to send to the host
         self.sequence_number = 0
         self.send_fin = False
+        self.end_program = False
 
     def allowed_to_send(self):
         size_packet = self.max_data_size - self.size_of_header
@@ -123,7 +124,7 @@ class JerrTom_send(BogoSender):
             if int(fin_ack) == 1:
                 #if we opted to close the connection, cool
                 print("Connection closed! Data transfer complete.")
-                exit(0)
+                self.end_program = True
             #receiver is expecting packet with sequence_number next, so its received up
             #to sequence_number bytes
             self.curr_wind = sequence_number
@@ -172,14 +173,24 @@ class JerrTom_send(BogoSender):
             if self.check_if_done():
                 #check to see if we have any more data to transmit
                 self.send_fin = True
-            #time.sleep(3)
+
+            if self.end_program:
+                return
 
 if __name__ == "__main__":
     #np.random.seed(4)
-    bytes_to_send = 102400
-    random_data = ''
-    for _ in range(bytes_to_send):
-        random_data += to_bin(np.random.randint(0,256), num_bytes = 1)
+    # bytes_to_send = 102400
+    # random_data = ''
+    # for _ in range(bytes_to_send):
+    #     random_data += to_bin(np.random.randint(0,256), num_bytes = 1)
+    
     sndr = JerrTom_send()
-    sndr.send(random_data)
+    data = open("test.txt","rb").read()
+    s = len(data)
+    file_data = ''
+    for byte in data:
+        file_data += to_bin(ord(byte), num_bytes = 1)
+    t = time.time()
+    sndr.send(file_data)
 
+    print("Throughput: %.3f bytes / sec"%(s/(time.time() - t)))
