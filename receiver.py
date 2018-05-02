@@ -27,7 +27,7 @@ class BogoReceiver(object):
 class JerrTom_recv(BogoReceiver):
     def __init__(self):
         super(JerrTom_recv,self).__init__()
-        
+        self.print_stuff = False
         #specificies locations of header fields in the header block
         self.size_of_sequence_number = 8
         self.index_of_sequence_number = 1
@@ -81,20 +81,23 @@ class JerrTom_recv(BogoReceiver):
                     self.data += self.data_queue[to_bin(sn, num_bytes=self.size_of_sequence_number)]
                     #remove this from the queue
                     del self.data_queue[to_bin(sn, num_bytes=self.size_of_sequence_number)]
-        print("Updated next expected byte to: %d"%(int(self.sequence_number,2) - int(self.starting_sequence_number,2)))
+        if self.print_stuff:
+            print("Updated next expected byte to: %d"%(int(self.sequence_number,2) - int(self.starting_sequence_number,2)))
 
     def receive(self):
         while True:
             packet = self.simulator.u_receive()
             if packet is None:
-                print("Packet not received.")
+                if self.print_stuff:
+                    print("Packet not received.")
                 return
             packet = [to_bin(bite,num_bytes = 1) for bite in packet]
             p = ''
             for bite in packet:
                 p += bite
             packet = p
-            print("\n\nParsing packet.")
+            if self.print_stuff:
+                print("\n\nParsing packet.")
             
             #print("Packet: %s"%packet)
             #packet = packet[2:] #get rid of beginning nonsense
@@ -119,7 +122,8 @@ class JerrTom_recv(BogoReceiver):
                 #send an ack for the next packet we hope to receive in the sequence
                 #print("Data checksum: %s"%data_chksum)
                 #print("Header checksum: %s"%header_chksum)
-                print("Checksum invalid, next expected frame is %d."%(int(sequence_number,2) - int(self.starting_sequence_number,2)))
+                if self.print_stuff:
+                    print("Checksum invalid, next expected frame is %d."%(int(sequence_number,2) - int(self.starting_sequence_number,2)))
 
             else:
                 
@@ -127,8 +131,8 @@ class JerrTom_recv(BogoReceiver):
                     #TODO make a hello sequence, during which they agree on the starting sequence number
                     self.connection_active = True
                     self.initialize_sequence_number(sequence_number)
-
-                print("Checksum valid, received sequence_number: %d."%(int(sequence_number,2) - int(self.starting_sequence_number,2)))
+                if self.print_stuff:
+                    print("Checksum valid, received sequence_number: %d."%(int(sequence_number,2) - int(self.starting_sequence_number,2)))
 
                 self.store(data,sequence_number) #store this data, with the corresponding sequence number
                 if sequence_number == self.sequence_number:
@@ -138,7 +142,8 @@ class JerrTom_recv(BogoReceiver):
             fin_ack = to_bin(0,num_bytes=1)
             if fin == to_bin(1, num_bytes = 1): 
                 #if the fin byte is checked, end the connection
-                print("Acknowledging desire to close connection.")
+                if self.print_stuff:
+                    print("Acknowledging desire to close connection.")
                 fin_ack = to_bin(1,num_bytes=1)
 
             send_seq_num = self.sequence_number

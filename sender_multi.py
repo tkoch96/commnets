@@ -4,7 +4,7 @@ import socket
 import channelsimulator
 import time
 import numpy as np, struct
-import utils, logging
+import utils, logging, threading
 
 from helper_funcs import *
 
@@ -32,9 +32,40 @@ class BogoSender(object):
                 pass
 
 
+class RapidSender(threading.Thread):
+    def __init__(self, jts):
+        super(RapidSender,self).__init__()
+        self.jts = jts
+
+    def run(self):
+        while not self.jts.end_program:
+            if self.jts.allowed_to_send():
+                self.jts.send_packet(self.jts.curr_sent) #send packet to receiver
+            time.sleep(.001)
+
+class RapidRetriever(threading.Thread):
+    def __init__(self,jts):
+        super(RapidRetriever, self).__init__()
+        self.jts = jts
+
+    def run(self):
+        while not self.jts.end_program:
+            try:
+                response = self.jts.simulator.u_receive() #get a response
+                self.jts.handle_response(response) #process this response
+            except socket.timeout:
+                self.jts.handle_timeout()
+
+            if self.jts.check_if_done():
+                #check to see if we have any more data to transmit
+                self.jts.send_fin = True
+            time.sleep(.001)
+
+
 class JerrTom_send(BogoSender):
     def __init__(self):
         super(JerrTom_send,self).__init__()
+        self.print_stuff = True
         #specificies locations of header fields in the header block
         self.size_of_sequence_number = 8
         self.index_of_sequence_number = 1
@@ -44,7 +75,7 @@ class JerrTom_send(BogoSender):
         self.size_of_header = self.size_of_checksum + self.size_of_sequence_number + 1
 
         self.max_data_size = 1024 - self.size_of_header #bytes
-        self.max_un_acked = 30 #size of window (in packet size units)
+        self.max_un_acked = 10 #size of window (in packet size units)
 
         #connection oriented things
         self.start_sequence_number = 0 #offset accounting for random starting sequence number
@@ -55,17 +86,23 @@ class JerrTom_send(BogoSender):
         self.send_fin = False
         self.end_program = False
 
-        self.print_stuff = False
+
+        #thread oriented things
+        #anything that accesses variables that could be both read and written by the threads at the same time should be locked
+        self.lock = threading.Lock()
 
     def allowed_to_send(self):
         size_packet = self.max_data_size - self.size_of_header
-        num_packs_un_acked = (int(self.curr_sent,2) - int(self.curr_wind,2)) / size_packet
-
+        self.lock.acquire()
+        try:
+            num_packs_un_acked = (int(self.curr_sent,2) - int(self.curr_wind,2)) / size_packet
+        finally:
+            self.lock.release()
         return num_packs_un_acked <= self.max_un_acked
 
     def check_if_done(self):
         # checks to see if our current window is at the length of the data
-        byte_num = int(self.curr_wind,2) - int(self.start_sequence_number,2)
+        byte_num = int(self.curr_wind,2) - int(self.start_sequence_number,2) #curr_wind is read and written by the same thread, no lock needed
         if self.print_stuff:
             print("Current window: %d"%byte_num)
         return byte_num >= len(self.data) / 8
@@ -82,7 +119,7 @@ class JerrTom_send(BogoSender):
 
     def send_packet(self, seq_num, fin_bit = None):
         #send the packet whose sequence number starts with seq_num
-        if self.print_stuff:    
+        if self.print_stuff:
             print("Sending packet to host")
         if fin_bit is None:
              fin_bit = int(self.send_fin)
@@ -97,7 +134,11 @@ class JerrTom_send(BogoSender):
         #print("Sending header: %s"%header)
         packet = to_seq_of_ints(header + data) #convert this string data to ints
         packet = bytearray(packet) #make it a bytearray for transmission
-        self.curr_sent = to_bin(np.maximum(int(seq_num,2) + len(data) / 8, int(self.curr_sent,2)),num_bytes = self.size_of_sequence_number)
+        
+        #update the current sent pointer
+        #curr sent is read and written by same thread, don't need lock
+        self.curr_sent = to_bin(int(seq_num,2) + len(data) / 8,num_bytes = self.size_of_sequence_number)
+        
         self.simulator.u_send(packet)
 
     def handle_response(self, packet):
@@ -159,20 +200,17 @@ class JerrTom_send(BogoSender):
         self.start_sequence_number = to_bin(sequence_number,num_bytes=self.size_of_sequence_number)
         self.curr_wind = to_bin(int(self.start_sequence_number,2) + self.max_data_size,num_bytes=self.size_of_sequence_number)
         self.curr_sent = self.start_sequence_number
-        while not self.end_program:
-            #TODO: check to see if we are past our current data-sending limit
-            if self.allowed_to_send():
-                self.send_packet(self.curr_sent) #send packet to receiver
-            else:
-                self.handle_timeout()
-            try:
-                response = self.simulator.u_receive() #get a response
-                self.handle_response(response) #process this response
-            except socket.timeout:
-                self.handle_timeout()
-            if self.check_if_done():
-                #check to see if we have any more data to transmit
-                self.send_fin = True
+
+        threads = []
+        rs = RapidSender(self)
+        rr = RapidRetriever(self)
+        threads.append(rs)
+        threads.append(rr)
+        rs.start() #sent packets
+        rr.start() #look for responses
+
+        for t in threads:
+            t.join()
 
 if __name__ == "__main__":
     sndr = JerrTom_send()

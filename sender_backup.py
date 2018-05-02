@@ -4,7 +4,7 @@ import socket
 import channelsimulator
 import time
 import numpy as np, struct
-import utils, logging
+import utils, logging, threading
 
 from helper_funcs import *
 
@@ -32,6 +32,16 @@ class BogoSender(object):
                 pass
 
 
+class RapidSender(threading.Thread):
+    def __init__(self):
+
+
+    def send_packet(self):
+
+
+    def run(self):
+
+
 class JerrTom_send(BogoSender):
     def __init__(self):
         super(JerrTom_send,self).__init__()
@@ -44,7 +54,7 @@ class JerrTom_send(BogoSender):
         self.size_of_header = self.size_of_checksum + self.size_of_sequence_number + 1
 
         self.max_data_size = 1024 - self.size_of_header #bytes
-        self.max_un_acked = 30 #size of window (in packet size units)
+        self.max_un_acked = 10 #size of window (in packet size units)
 
         #connection oriented things
         self.start_sequence_number = 0 #offset accounting for random starting sequence number
@@ -55,8 +65,6 @@ class JerrTom_send(BogoSender):
         self.send_fin = False
         self.end_program = False
 
-        self.print_stuff = False
-
     def allowed_to_send(self):
         size_packet = self.max_data_size - self.size_of_header
         num_packs_un_acked = (int(self.curr_sent,2) - int(self.curr_wind,2)) / size_packet
@@ -66,8 +74,7 @@ class JerrTom_send(BogoSender):
     def check_if_done(self):
         # checks to see if our current window is at the length of the data
         byte_num = int(self.curr_wind,2) - int(self.start_sequence_number,2)
-        if self.print_stuff:
-            print("Current window: %d"%byte_num)
+        print("Current window: %d"%byte_num)
         return byte_num >= len(self.data) / 8
 
     def get_data(self,seq_num):
@@ -82,8 +89,7 @@ class JerrTom_send(BogoSender):
 
     def send_packet(self, seq_num, fin_bit = None):
         #send the packet whose sequence number starts with seq_num
-        if self.print_stuff:    
-            print("Sending packet to host")
+        print("Sending packet to host")
         if fin_bit is None:
              fin_bit = int(self.send_fin)
         data = self.get_data(seq_num)
@@ -92,18 +98,16 @@ class JerrTom_send(BogoSender):
         fin = to_bin(fin_bit, num_bytes = 1)
 
         header = seq_num + checksum + fin
-        if self.print_stuff:
-            print("Sending packet with sequence number: %d."%(int(seq_num,2) - int(self.start_sequence_number,2)))
+        print("Sending packet with sequence number: %d."%(int(seq_num,2) - int(self.start_sequence_number,2)))
         #print("Sending header: %s"%header)
         packet = to_seq_of_ints(header + data) #convert this string data to ints
         packet = bytearray(packet) #make it a bytearray for transmission
-        self.curr_sent = to_bin(np.maximum(int(seq_num,2) + len(data) / 8, int(self.curr_sent,2)),num_bytes = self.size_of_sequence_number)
+        self.curr_sent = to_bin(int(seq_num,2) + len(data) / 8,num_bytes = self.size_of_sequence_number)
         self.simulator.u_send(packet)
 
     def handle_response(self, packet):
         ## Packet parsing
-        if self.print_stuff:
-            print("\n\nParsing packet...")
+        print("\n\nParsing packet...")
         packet = [to_bin(bite,num_bytes = 1) for bite in packet]
         p = ''
         for bite in packet:
@@ -118,14 +122,18 @@ class JerrTom_send(BogoSender):
         # calculate checksum of data enclosed in the packet
         data_chksum = calculate_checksum(data)
 
-        if (data_chksum == header_chksum):
-            if self.print_stuff:
-                print("Checksum valid.")
+        if not (data_chksum == header_chksum):
+            #TODO: probably ignore cases like this, instead go with timeouts
+            #going with timeouts will prevent duplicate data
+            print("Checksum invalid")
+            return
+
+        else:
+            print("Checksum valid.")
             #host successfully received a packet, record the sequence number
             if int(fin_ack) == 1:
                 #if we opted to close the connection, cool
-                if self.print_stuff:
-                    print("Connection closed! Data transfer complete.")
+                print("Connection closed! Data transfer complete.")
                 self.end_program = True
             #receiver is expecting packet with sequence_number next, so its received up
             #to sequence_number bytes
@@ -143,8 +151,7 @@ class JerrTom_send(BogoSender):
         #like to resend
 
         #size_data_packet = self.max_data_size - self.size_of_header
-        if self.print_stuff:
-            print("Handling timeout, resending sequence starting at: %d."%(int(self.curr_wind,2) - int(self.start_sequence_number,2)))
+        print("Handling timeout, resending sequence starting at: %d."%(int(self.curr_wind,2) - int(self.start_sequence_number,2)))
         seq_to_send = self.curr_wind#to_bin(int(self.curr_wind,2) - size_data_packet, num_bytes=self.size_of_sequence_number)
 
         self.send_packet(seq_to_send)
@@ -159,20 +166,25 @@ class JerrTom_send(BogoSender):
         self.start_sequence_number = to_bin(sequence_number,num_bytes=self.size_of_sequence_number)
         self.curr_wind = to_bin(int(self.start_sequence_number,2) + self.max_data_size,num_bytes=self.size_of_sequence_number)
         self.curr_sent = self.start_sequence_number
-        while not self.end_program:
+        while True:
             #TODO: check to see if we are past our current data-sending limit
             if self.allowed_to_send():
                 self.send_packet(self.curr_sent) #send packet to receiver
             else:
-                self.handle_timeout()
+                print("Waiting to send more, sleeping...")
+                time.sleep(.02)
             try:
                 response = self.simulator.u_receive() #get a response
                 self.handle_response(response) #process this response
             except socket.timeout:
                 self.handle_timeout()
+
             if self.check_if_done():
                 #check to see if we have any more data to transmit
                 self.send_fin = True
+
+            if self.end_program:
+                return
 
 if __name__ == "__main__":
     sndr = JerrTom_send()
@@ -181,8 +193,6 @@ if __name__ == "__main__":
     file_data = ''
     for byte in data:
         file_data += to_bin(ord(byte), num_bytes = 1)
-    print("Read data")
-    time.sleep(5)
     t = time.time()
     sndr.send(file_data)
 
